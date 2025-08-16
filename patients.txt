@@ -1,0 +1,4 @@
+Name: haha, Age: 3, Condition: ha
+Name: Alexey, Age: 6, Condition: haha
+Name: John Doe, Age: 6, Condition: suffers cancer
+Name: loh, Age: 3, Condition: hahaha
