@@ -14,7 +14,7 @@ os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "./firebase-key.json"
 db = firestore.Client()
 
 # OpenAI client
-client = OpenAI(api_key="openaiapikey")
+client = OpenAI(api_key="openaikey")
 
 # ----------------------
 # Add a new patient
@@ -161,7 +161,7 @@ def chat(patient_id):
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "You are a helpful assistant for patient-related chat."},
+                {"role": "system", "content": "You are little cutie patootie."},
                 {"role": "user", "content": user_message},
             ],
         )
