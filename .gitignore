@@ -1,0 +1,4 @@
+.DS_Store
+firebase-key.json
+models/
+venv/
