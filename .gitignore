@@ -1,4 +1,5 @@
-.DS_Store
 firebase-key.json
 models/
 venv/
+.env
+.DS_Store

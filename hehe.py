@@ -5,6 +5,9 @@ import traceback
 from google.cloud import firestore 
 from openai import OpenAI
 from datetime import datetime
+from dotenv import load_dotenv
+
+load_dotenv()
 
 app = Flask(__name__)
 CORS(app)
@@ -14,7 +17,7 @@ os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "./firebase-key.json"
 db = firestore.Client()
 
 # OpenAI client
-client = OpenAI(api_key="openaikey")
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # ----------------------
 # Add a new patient
@@ -67,73 +70,6 @@ def get_patients():
     except Exception as e:
         traceback.print_exc()
         return jsonify({"success": False, "error": str(e)}), 500
-
-# ----------------------
-# Chat endpoint
-# ----------------------
-# @app.route("/chat", methods=["POST"])
-# def chat():
-#     data = request.json
-#     user_message = data.get("message", "")
-
-#     if not user_message.strip():
-#         return jsonify({"error": "Empty message"}), 400
-
-#     try:
-#         chat_ref = db.collection("chat_history")
-
-#         # Save user message with timestamp
-#         chat_ref.add({
-#             "role": "user",
-#             "content": user_message,
-#             "timestamp": datetime.utcnow()
-#         })
-
-#         # Generate assistant reply
-#         response = client.chat.completions.create(
-#             model="gpt-4o-mini",
-#             messages=[
-#                 {"role": "system", "content": "You are a helpful assistant for patient-related chat."},
-#                 {"role": "user", "content": user_message},
-#             ],
-#         )
-#         reply = response.choices[0].message.content
-
-#         # Save assistant message with timestamp
-#         chat_ref.add({
-#             "role": "assistant",
-#             "content": reply,
-#             "timestamp": datetime.utcnow()
-#         })
-
-#         return jsonify({"response": reply})
-
-#     except Exception as e:
-#         traceback.print_exc()
-#         return jsonify({"error": str(e)}), 500
-
-# ----------------------
-# Fetch chat history
-# ----------------------
-# @app.route("/chat-history", methods=["GET"])
-# def get_chat_history():
-#     try:
-#         chat_ref = db.collection("chat_history").order_by("timestamp")
-#         docs = chat_ref.stream()
-
-#         messages = []
-#         for doc in docs:
-#             msg = doc.to_dict()
-#             messages.append({
-#                 "role": msg.get("role"),
-#                 "content": msg.get("content")
-#             })
-
-#         return jsonify(messages)
-
-#     except Exception as e:
-#         traceback.print_exc()
-#         return jsonify({"success": False, "error": str(e)}), 500
 
 # ----------------------
 # Chat endpoint (per patient)
