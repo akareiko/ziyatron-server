@@ -209,6 +209,37 @@ def get_chat_history(patient_id):
         traceback.print_exc()
         return jsonify({"success": False, "error": str(e)}), 500
 
+@app.route("/search", methods=["GET"])
+def search_messages():
+    keyword = request.args.get("q", "").lower().strip()
+    if not keyword:
+        return jsonify({"error": "Missing search keyword"}), 400
+
+    try:
+        chats_ref = db.collection_group("chat_history")
+        docs = chats_ref.stream()
+
+        results = []
+        for doc in docs:
+            data = doc.to_dict()
+            if keyword in data.get("content", "").lower():
+                patient_ref = doc.reference.parent.parent
+                patient_id = patient_ref.id
+
+                results.append({
+                    "patient_id": patient_id,
+                    "message_id": doc.id,
+                    "role": data.get("role"),
+                    "content": data.get("content"),
+                    "timestamp": data.get("timestamp").isoformat()
+                })
+
+        return jsonify(results)
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
 # ----------------------
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
