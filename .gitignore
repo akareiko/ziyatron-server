@@ -3,3 +3,5 @@ models/
 venv/
 .env
 .DS_Store
+samples/
+__pycache__/

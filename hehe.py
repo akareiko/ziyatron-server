@@ -78,6 +78,10 @@ def get_patients():
 def chat(patient_id):
     data = request.json
     user_message = data.get("message", "")
+    
+    file_path = data.get("file_path", "")
+    eeg_data = preprocess_eeg_data(file_path) # (N, 18, 2500)
+
 
     if not user_message.strip():
         return jsonify({"error": "Empty message"}), 400

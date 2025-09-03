@@ -9,11 +9,12 @@ class ChannelConfig(Enum):
 
 DEFAULT_CONFIG = {
     "channel_conf": ChannelConfig.DOUBLE_BANANA,
-    "sampling_rate": 256,
+    "sampling_rate": 250,
     "notch_filter": 60,
     "filter": (0.5, 45),
     "normalize": True,
     "window": 10,
+    "batch_size": 32,
 }
 
 def z_normalize(data: np.ndarray) -> np.ndarray:
@@ -31,11 +32,13 @@ def preprocess_eeg_data(
         filter: tuple = DEFAULT_CONFIG['filter'],
         normalize: bool = DEFAULT_CONFIG['normalize'],
         window: int = DEFAULT_CONFIG['window'],
+        batch_size: int = DEFAULT_CONFIG['batch_size'],
     ) -> np.ndarray:
 
     raw = mne.io.read_raw_edf(file_path, preload=True, verbose=False)
     channels_to_drop = []
-    channels_to_rename = [[], []]
+    channels_to_rename = {}
+    channels_to_be_found = set(channel_conf.value)
 
     for channel in raw.ch_names:
         # Dropping non EEG channels
@@ -44,17 +47,17 @@ def preprocess_eeg_data(
         
         proper_name = None
         for proper_channel in channel_conf.value:
-            if channel in proper_channel:
+            if proper_channel in channel:
                 proper_name = proper_channel
                 break
-        if proper_name is None:
+        if proper_name and proper_name in channels_to_be_found:
+            channels_to_rename[channel] = proper_name
+            channels_to_be_found.remove(proper_name)
+        else:
             channels_to_drop.append(channel)
-        elif channel not in channels_to_rename[0] and proper_name not in channels_to_rename[1]:
-            channels_to_rename[0].append(channel)
-            channels_to_rename[1].append(proper_name)
 
     raw.drop_channels(channels_to_drop)
-    raw.rename_channels(dict(zip(channels_to_rename[0], channels_to_rename[1])))
+    raw.rename_channels(channels_to_rename)
 
     raw.pick(channel_conf.value)
 
@@ -67,7 +70,7 @@ def preprocess_eeg_data(
     if filter:
         raw.filter(*filter, fir_design='firwin', verbose=False)
 
-    raw.set_meas_date(datetime.datetime.now())
+    raw.set_meas_date(datetime.datetime.now().replace(tzinfo=datetime.timezone.utc))
 
     # extracting windows and batching
     raw_data = raw.get_data()
@@ -83,6 +86,10 @@ def preprocess_eeg_data(
     if normalize:
         batches = z_normalize(batches)
 
-    print(f"[INFO] Shape of batches array: {batches.shape}")
+    batches = batches.astype(np.float32)
 
+    batches = np.array_split(batches, batches.shape[0] // batch_size, axis=0)
+
+    
+    print(f"[INFO] Number of batches: {len(batches)}")
     return batches
