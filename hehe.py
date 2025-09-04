@@ -8,6 +8,7 @@ import numpy as np
 import bcrypt
 import jwt
 from functools import wraps
+from collections import defaultdict
 
 SECRET_KEY = "super-secret-key"
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "./firebase-key.json"
@@ -227,6 +228,82 @@ def get_chat_history(patient_id):
         traceback.print_exc()
         return jsonify({"success": False, "error": str(e)}), 500
 
+@app.route("/search", methods=["GET", "OPTIONS"])
+@token_required
+def search_messages():
+    if request.method == "OPTIONS":
+        return '', 204
+
+    keyword = request.args.get("q", "").lower().strip()
+    if not keyword:
+        return jsonify([])  # Return empty array if no keyword
+
+    try:
+        # Search all chat_history subcollections across all patients
+        chats_ref = db.collection_group("chat_history")
+        docs = chats_ref.stream()
+
+        results = []
+
+        for doc in docs:
+            data = doc.to_dict()
+            content = data.get("content", "").lower()
+            if keyword in content:
+                # Find patient_id from document reference
+                patient_ref = doc.reference.parent.parent
+                if not patient_ref:
+                    continue
+                patient_id = patient_ref.id
+
+                results.append({
+                    "patient_id": patient_id,
+                    "message_id": doc.id,
+                    "role": data.get("role"),
+                    "content": data.get("content"),
+                    "timestamp": data.get("timestamp").isoformat() if data.get("timestamp") else None
+                })
+
+        return jsonify(results)
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+    
+    # In-memory storage per session (keyed by a temporary ID, e.g., generated on frontend)
+ephemeral_chats = defaultdict(list)
+
+@app.route("/anon-chat", methods=["POST", "OPTIONS"])
+def anon_chat():
+    if request.method == "OPTIONS":
+        return '', 204
+
+    data = request.json
+    session_id = data.get("session_id")  # frontend generates a random UUID per page load
+    user_message = data.get("message", "").strip()
+
+    if not session_id or not user_message:
+        return jsonify({"error": "Missing session_id or message"}), 400
+
+    try:
+        # Save user message
+        ephemeral_chats[session_id].append({"role": "user", "content": user_message})
+
+        # GPT call
+        messages = [{"role": "system", "content": "You are a helpful assistant."}] + ephemeral_chats[session_id]
+
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=messages
+        )
+        reply = response.choices[0].message.content
+
+        # Save assistant message
+        ephemeral_chats[session_id].append({"role": "assistant", "content": reply})
+
+        return jsonify({"response": reply, "history": ephemeral_chats[session_id]})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
 
 # ----------------------
 if __name__ == "__main__":
