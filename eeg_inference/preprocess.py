@@ -1,21 +1,7 @@
 import mne
+import yaml
 import datetime
 import numpy as np
-
-from enum import Enum
-
-class ChannelConfig(Enum):
-    DOUBLE_BANANA = ['FP1-F7', 'F7-T7', 'T7-P7', 'P7-O1', 'FP1-F3', 'F3-C3', 'C3-P3', 'P3-O1', 'FZ-CZ', 'CZ-PZ', 'FP2-F4', 'F4-C4', 'C4-P4', 'P4-O2', 'FP2-F8', 'F8-T8', 'T8-P8', 'P8-O2']
-
-DEFAULT_CONFIG = {
-    "channel_conf": ChannelConfig.DOUBLE_BANANA,
-    "sampling_rate": 250,
-    "notch_filter": 60,
-    "filter": (0.5, 45),
-    "normalize": True,
-    "window": 10,
-    "batch_size": 32,
-}
 
 def z_normalize(data: np.ndarray) -> np.ndarray:
     data = np.nan_to_num(data, nan=0.0)  # Handle NaN values
@@ -24,21 +10,22 @@ def z_normalize(data: np.ndarray) -> np.ndarray:
     std[std == 0] = 1  # Avoid division by zero for flat signals
     return (data - mean) / std
 
-def preprocess_eeg_data(
-        file_path: str, 
-        channel_conf: ChannelConfig = DEFAULT_CONFIG['channel_conf'],
-        sampling_rate: int = DEFAULT_CONFIG['sampling_rate'],
-        notch_filter: int = DEFAULT_CONFIG['notch_filter'],
-        filter: tuple = DEFAULT_CONFIG['filter'],
-        normalize: bool = DEFAULT_CONFIG['normalize'],
-        window: int = DEFAULT_CONFIG['window'],
-        batch_size: int = DEFAULT_CONFIG['batch_size'],
-    ) -> np.ndarray:
+def preprocess_eeg_data(file_path: str, config_file: str = './eeg_inference/default_configs.yaml') -> np.ndarray:
+
+    with open(config_file, 'r') as f:
+        config = yaml.safe_load(f)
+        channel_conf = config['channel_conf']
+        sampling_rate = config['sampling_rate']
+        notch_filter = config['notch_filter']
+        filter = config['filter']
+        normalize = config['normalize']
+        window = config['window']
+        batch_size = config['batch_size']
 
     raw = mne.io.read_raw_edf(file_path, preload=True, verbose=False)
     channels_to_drop = []
     channels_to_rename = {}
-    channels_to_be_found = set(channel_conf.value)
+    channels_to_be_found = set(channel_conf)
 
     for channel in raw.ch_names:
         # Dropping non EEG channels
@@ -46,7 +33,7 @@ def preprocess_eeg_data(
             channels_to_drop.append(channel)
         
         proper_name = None
-        for proper_channel in channel_conf.value:
+        for proper_channel in channel_conf:
             if proper_channel in channel:
                 proper_name = proper_channel
                 break
@@ -59,7 +46,7 @@ def preprocess_eeg_data(
     raw.drop_channels(channels_to_drop)
     raw.rename_channels(channels_to_rename)
 
-    raw.pick(channel_conf.value)
+    raw.pick(channel_conf)
 
     # preprocessing
     raw.resample(sampling_rate, npad='auto')
@@ -92,4 +79,4 @@ def preprocess_eeg_data(
 
     
     print(f"[INFO] Number of batches: {len(batches)}")
-    return batches
+    return batches, config

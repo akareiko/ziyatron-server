@@ -7,8 +7,13 @@ from datetime import datetime, timedelta, timezone
 import numpy as np
 import bcrypt
 import jwt
+import yaml
+import json
+from dotenv import load_dotenv
 from functools import wraps
 from collections import defaultdict
+
+load_dotenv()
 
 SECRET_KEY = "super-secret-key"
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "./firebase-key.json"
@@ -17,7 +22,7 @@ app = Flask(__name__)
 CORS(app)
 
 db = firestore.Client()
-client = OpenAI(api_key="apikey")
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 
 # ----------------------
@@ -175,8 +180,8 @@ def chat(patient_id):
         if file_url:
             from script import run_eeg_inference
             bucket, blob = file_url.replace("gs://", "").split("/", 1)
-            output = run_eeg_inference(bucket, blob)
-            eeg_summary = f"EEG model output: {np.array(output).tolist()}"
+            eeg_output = run_eeg_inference(bucket, blob)
+            eeg_summary = f"EEG model output: {np.array(eeg_output).tolist()}"
             chat_ref.add({
                 "role": "system",
                 "content": f"Attached EEG file analyzed from {file_url}",
@@ -184,11 +189,20 @@ def chat(patient_id):
             })
 
         # Prepare GPT messages
-        messages = [{"role": "system", "content": "You are a helpful medical assistant."}]
+        with open("prompts.yaml", "r") as f:
+            prompts = yaml.safe_load(f)
+        messages = [
+            {"role": "system", "content": prompts["system"]},
+            {"role": "developer", "content": prompts["developer"]}
+        ]
+        if eeg_summary:
+            messages.append({
+                "role": "system", 
+                "name": "eeg_data",
+                "content": json.dumps(eeg_summary, indent=2)
+            })
         if user_message:
             messages.append({"role": "user", "content": user_message})
-        if eeg_summary:
-            messages.append({"role": "system", "content": eeg_summary})
 
         response = client.chat.completions.create(
             model="gpt-4o-mini",

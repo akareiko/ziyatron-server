@@ -96,18 +96,52 @@ def run_inference_sync(session: ort.InferenceSession, file_path: str) -> np.ndar
     """
     Synchronous inference call.
     """
-    inputs = preprocess.preprocess_eeg_data(file_path)
+    inputs, config = preprocess.preprocess_eeg_data(file_path)
     input_names, output_names = get_io_names(session)
-    results = []
+    eeg_results = []
     for input in inputs:
         result = session.run(output_names, {input_names[0]: input})
         if isinstance(result, list) and len(result) == 1:
             result = result[0]
-        results.append(result)
-    results = np.concatenate(results, axis=0) # gather from all batches
-    results = utils.softmax(results) # apply softmax to raw logits
-    results = np.argmax(results, axis=1) # get predicted class labels
-    return results
+        eeg_results.append(result)
+    eeg_results = np.concatenate(eeg_results, axis=0) # gather from all batches
+    eeg_results = utils.softmax(eeg_results) # apply softmax to raw logits
+    
+    class_indices = np.argmax(eeg_results, axis=1)
+    confidence_levels = np.max(eeg_results, axis=1)
+
+    events = []
+    left, right = 0, -1
+
+    event_annotation = {
+        0: "normal",
+        1: "seizure",
+    }
+
+    def save_event(index: int, start: int, end: int):
+        events.append({
+            "event": event_annotation[class_indices[index]],
+            "confidence_level": confidence_levels[index],
+            "start_time": start,
+            "end_time": end, 
+        })
+
+    window = config['window']
+
+    for i in range(len(class_indices)):
+        if class_indices[i] not in event_annotation:
+            continue
+        if i == 0 or class_indices[i - 1] != class_indices[i]:
+            if i != 0:
+                save_event(i - 1, left, right)
+            left, right = right + 1, right + window
+        elif class_indices[i - 1] == class_indices[i]:
+            right += window
+        if i == len(class_indices) - 1:
+            save_event(i, left, right)
+            left, right = right, right
+    config['events'] = events
+    return config
 
 async def run_inference_async(session: ort.InferenceSession, file_path: str) -> np.ndarray:
     """
