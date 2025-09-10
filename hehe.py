@@ -1,5 +1,6 @@
-from flask import Flask, request, jsonify, g
+from flask import Flask, request, jsonify, g, Response, stream_with_context
 from flask_cors import CORS
+from flask_socketio import SocketIO, emit, join_room, leave_room
 import os, traceback
 from google.cloud import firestore, storage
 from openai import OpenAI
@@ -12,6 +13,9 @@ from collections import defaultdict
 import json
 from dotenv import load_dotenv
 import yaml
+from script import run_eeg_inference
+import uuid
+
 
 load_dotenv()
 
@@ -19,7 +23,8 @@ SECRET_KEY = "super-secret-key"
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "./firebase-key.json"
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, origins="http://localhost:3000", supports_credentials=True)
+socketio = SocketIO(app, cors_allowed_origins="http://localhost:3000", async_mode="eventlet")
 
 db = firestore.Client()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -152,7 +157,7 @@ def get_patients():
 # ----------------------
 @app.route("/chat/<patient_id>", methods=["POST", "OPTIONS"])
 @token_required
-def chat(patient_id):
+def post_chat(patient_id):
     if request.method == "OPTIONS":
         return '', 204
 
@@ -165,16 +170,10 @@ def chat(patient_id):
         return jsonify({"error": "Empty message and no file"}), 400
 
     try:
-        # ✅ Keep everything scoped under the authenticated user
-        patient_ref = (
-            db.collection("users")
-            .document(g.user["user_id"])
-            .collection("patients")
-            .document(patient_id)
-        )
+        # Firestore refs
+        patient_ref = db.collection("users").document(g.user["user_id"]).collection("patients").document(patient_id)
         if not patient_ref.get().exists:
             return jsonify({"error": "Unauthorized"}), 401
-
         chat_ref = patient_ref.collection("chat_history")
 
         # Save user message
@@ -185,27 +184,21 @@ def chat(patient_id):
         }
 
         file_metadata = None
+        bucket, blob = None, None
         if file_url:
-            # Extract bucket and blob from gs:// URL
             bucket, blob = file_url.replace("gs://", "").split("/", 1)
-
-            # Generate signed URL for frontend preview
             signed_url = generate_signed_url(bucket, blob)
             file_metadata = {"url": signed_url, "name": file_name}
             msg_doc["file"] = file_metadata
 
         chat_ref.add(msg_doc)
 
-        # Optional EEG file processing
+        # EEG processing
         eeg_summary = None
         if file_url:
-            from script import run_eeg_inference
-
             try:
-                # Call helper directly with bucket + blob
                 output = run_eeg_inference(bucket, blob)
                 eeg_summary = f"EEG model output: {np.array(output).tolist()}"
-
                 chat_ref.add({
                     "role": "system",
                     "content": f"Attached EEG file analyzed from {file_name}",
@@ -215,57 +208,94 @@ def chat(patient_id):
                 print(f"[ERROR] EEG inference failed: {e}")
                 eeg_summary = "EEG analysis failed. Please try again later."
 
-        # Prepare GPT messages
-        with open("prompts.yaml", "r") as f:
-            prompts = yaml.safe_load(f)
-        messages = [
-            {"role": "system", "content": prompts["system"]},
-            {"role": "developer", "content": prompts["developer"]}
-        ]
+        # Create GPT session ID
+        session_id = str(uuid.uuid4())
 
-        if user_message:
-            messages.append({"role": "user", "content": user_message})
-        if eeg_summary:
-            messages.append({"role": "system", "content": eeg_summary})
+        # Store session metadata in memory or DB (optional)
+        # e.g., pending_messages[session_id] = {...}
 
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=messages,
-            response_format={"type": "json_object"}  # ✅ force JSON output
-        )
-
-        raw_reply = response.choices[0].message.content
-
-        # ----------------------
-        # Parse JSON safely
-        # ----------------------
-        try:
-            reply_json = json.loads(raw_reply)
-        except Exception:
-            # fallback: wrap plain text
-            reply_json = {
-                "text": raw_reply,
-                "highlights": [],
-                "next_steps": [],
-                "warnings": []
-            }
-
-        # Save in Firestore
-        chat_ref.add({
-            "role": "assistant",
-            "content": reply_json,  # store the structured object
-            "timestamp": datetime.utcnow()
-        })
-
-        # Send structured response to frontend
-        return jsonify({
-            "response": reply_json,
-            "eeg_summary": eeg_summary
-        })
+        return jsonify({"session_id": session_id, "eeg_summary": eeg_summary})
 
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
+
+
+# ----------------------
+# WebSocket: stream assistant responses
+# ----------------------
+@socketio.on("join")
+def on_join(data):
+    session_id = data.get("session_id")
+    join_room(session_id)
+    emit("status", {"msg": f"Joined session {session_id}"}, room=session_id)
+
+
+@socketio.on("start_assistant")
+def start_assistant(data):
+    token = data.get("token")
+    patient_id = data.get("patient_id")
+    session_id = data.get("session_id")
+    user_message = data.get("message")
+    eeg_summary = data.get("eeg_summary")  # optional
+
+    # manually decode JWT (same as token_required)
+    if token.startswith("Bearer "):
+        token = token.split()[1]
+
+    try:
+        user = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
+    except jwt.ExpiredSignatureError:
+        emit("assistant_update", {"text_delta": "Auth error: Token expired"}, room=session_id)
+        return
+    except Exception as e:
+        emit("assistant_update", {"text_delta": f"Auth error: {e}"}, room=session_id)
+        return
+
+    try:
+        # Firestore refs
+        patient_ref = db.collection("users").document(user["user_id"]).collection("patients").document(patient_id)
+        chat_ref = patient_ref.collection("chat_history")
+
+        # Prepare GPT messages
+        with open("prompts.yaml", "r") as f:
+            prompts = yaml.safe_load(f)
+
+        messages = [
+            {"role": "system", "content": prompts.get("system", "")},
+            {"role": "user", "content": prompts.get("developer", "")}
+        ]
+
+        if eeg_summary:
+            messages.append({"role": "system", "content": eeg_summary})
+
+        partial_text = ""
+
+        with client.responses.stream(model="gpt-4o-mini", input=messages) as stream:
+            for event in stream:
+                # Only process text deltas
+                if event.type == "response.output_text.delta":
+                    delta = getattr(event, "delta", "")
+                    if delta and isinstance(delta, str):
+                        # normalize whitespace/newlines
+                        clean_delta = delta.replace("\r", "")
+                        partial_text += clean_delta
+
+                        # emit to frontend
+                        emit("assistant_update", {"text_delta": clean_delta}, room=session_id)
+
+        # Save final message to Firestore
+        chat_ref.add({
+            "role": "assistant",
+            "content": {
+                "text": partial_text
+            },
+            "timestamp": datetime.utcnow()
+        })
+
+    except Exception as e:
+        emit("assistant_update", {"text_delta": f"Error: {e}"}, room=session_id)
+        traceback.print_exc()
 
 
 
@@ -386,4 +416,4 @@ def anon_chat():
 
 # ----------------------
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    socketio.run(app, host="0.0.0.0", port=5001, debug=True)
