@@ -1,17 +1,17 @@
 from flask import Flask, request, jsonify, g
 from flask_cors import CORS
 import os, traceback
-from google.cloud import firestore
+from google.cloud import firestore, storage
 from openai import OpenAI
 from datetime import datetime, timedelta, timezone
 import numpy as np
 import bcrypt
 import jwt
-import yaml
-import json
-from dotenv import load_dotenv
 from functools import wraps
 from collections import defaultdict
+import json
+from dotenv import load_dotenv
+import yaml
 
 load_dotenv()
 
@@ -23,6 +23,14 @@ CORS(app)
 
 db = firestore.Client()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+storage_client = storage.Client()
+
+def generate_signed_url(bucket_name, blob_name, expiration_minutes=15):
+    bucket = storage_client.bucket(bucket_name)
+    blob = bucket.blob(blob_name)
+    url = blob.generate_signed_url(expiration=timedelta(minutes=expiration_minutes))
+    return url
 
 
 # ----------------------
@@ -170,23 +178,42 @@ def chat(patient_id):
         chat_ref = patient_ref.collection("chat_history")
 
         # Save user message
-        msg_doc = {"role": "user", "content": user_message, "timestamp": datetime.utcnow()}
+        msg_doc = {
+            "role": "user",
+            "content": user_message,
+            "timestamp": datetime.utcnow()
+        }
+
+        file_metadata = None
         if file_url:
-            msg_doc["file"] = {"url": file_url, "name": file_name}
+            # Extract bucket and blob from gs:// URL
+            bucket, blob = file_url.replace("gs://", "").split("/", 1)
+
+            # Generate signed URL for frontend preview
+            signed_url = generate_signed_url(bucket, blob)
+            file_metadata = {"url": signed_url, "name": file_name}
+            msg_doc["file"] = file_metadata
+
         chat_ref.add(msg_doc)
 
         # Optional EEG file processing
         eeg_summary = None
         if file_url:
             from script import run_eeg_inference
-            bucket, blob = file_url.replace("gs://", "").split("/", 1)
-            eeg_output = run_eeg_inference(bucket, blob)
-            eeg_summary = f"EEG model output: {np.array(eeg_output).tolist()}"
-            chat_ref.add({
-                "role": "system",
-                "content": f"Attached EEG file analyzed from {file_url}",
-                "timestamp": datetime.utcnow()
-            })
+
+            try:
+                # Call helper directly with bucket + blob
+                output = run_eeg_inference(bucket, blob)
+                eeg_summary = f"EEG model output: {np.array(output).tolist()}"
+
+                chat_ref.add({
+                    "role": "system",
+                    "content": f"Attached EEG file analyzed from {file_name}",
+                    "timestamp": datetime.utcnow()
+                })
+            except Exception as e:
+                print(f"[ERROR] EEG inference failed: {e}")
+                eeg_summary = "EEG analysis failed. Please try again later."
 
         # Prepare GPT messages
         with open("prompts.yaml", "r") as f:
@@ -195,28 +222,46 @@ def chat(patient_id):
             {"role": "system", "content": prompts["system"]},
             {"role": "developer", "content": prompts["developer"]}
         ]
-        if eeg_summary:
-            messages.append({
-                "role": "system", 
-                "name": "eeg_data",
-                "content": json.dumps(eeg_summary, indent=2)
-            })
+
         if user_message:
             messages.append({"role": "user", "content": user_message})
+        if eeg_summary:
+            messages.append({"role": "system", "content": eeg_summary})
 
         response = client.chat.completions.create(
             model="gpt-4o-mini",
-            messages=messages
+            messages=messages,
+            response_format={"type": "json_object"}  # ✅ force JSON output
         )
-        reply = response.choices[0].message.content
 
+        raw_reply = response.choices[0].message.content
+
+        # ----------------------
+        # Parse JSON safely
+        # ----------------------
+        try:
+            reply_json = json.loads(raw_reply)
+        except Exception:
+            # fallback: wrap plain text
+            reply_json = {
+                "text": raw_reply,
+                "highlights": [],
+                "next_steps": [],
+                "warnings": []
+            }
+
+        # Save in Firestore
         chat_ref.add({
             "role": "assistant",
-            "content": reply,
+            "content": reply_json,  # store the structured object
             "timestamp": datetime.utcnow()
         })
 
-        return jsonify({"response": reply, "eeg_summary": eeg_summary})
+        # Send structured response to frontend
+        return jsonify({
+            "response": reply_json,
+            "eeg_summary": eeg_summary
+        })
 
     except Exception as e:
         traceback.print_exc()
@@ -233,10 +278,30 @@ def get_chat_history(patient_id):
             return jsonify({"error": "Unauthorized"}), 401
 
         chat_ref = patient_ref.collection("chat_history").order_by("timestamp")
-        messages = [doc.to_dict() for doc in chat_ref.stream()]
-        for m in messages:
-            if "timestamp" in m:
-                m["timestamp"] = m["timestamp"].isoformat()
+        messages = []
+        for doc in chat_ref.stream():
+            data = doc.to_dict()
+
+            # Convert Firestore timestamp to iso
+            if "timestamp" in data:
+                data["timestamp"] = data["timestamp"].isoformat()
+
+            # If file exists, replace gs:// with signed URL
+            if "file" in data and "url" in data["file"]:
+                gs_path = data["file"]["url"]
+                if gs_path.startswith("gs://"):
+                    bucket_name, blob_name = gs_path.replace("gs://", "").split("/", 1)
+                    bucket = storage_client.bucket(bucket_name)
+                    blob = bucket.blob(blob_name)
+                    signed_url = blob.generate_signed_url(
+                        version="v4",
+                        expiration=timedelta(hours=1),
+                        method="GET"
+                    )
+                    data["file"]["url"] = signed_url
+
+            messages.append(data)
+
         return jsonify(messages)
     except Exception as e:
         traceback.print_exc()
