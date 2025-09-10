@@ -1,7 +1,9 @@
 firebase-key.json
 models/
 venv/
+.venv/
 .env
 .DS_Store
 samples/
 __pycache__/
+.vscode
