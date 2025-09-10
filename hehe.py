@@ -263,7 +263,7 @@ def start_assistant(data):
 
         messages = [
             {"role": "system", "content": prompts.get("system", "")},
-            {"role": "user", "content": prompts.get("developer", "")}
+            # {"role": "user", "content": prompts.get("developer", "")}
         ]
 
         if eeg_summary:
