@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 import yaml
 from script import run_eeg_inference
 import uuid
+from google.cloud.firestore_v1 import SERVER_TIMESTAMP
 
 
 load_dotenv()
@@ -133,8 +134,22 @@ def add_patient():
             return jsonify({"success": False, "error": "Missing fields"}), 400
 
         patients_ref = db.collection("users").document(g.user["user_id"]).collection("patients")
-        patients_ref.add({"name": name, "age": age, "condition": condition})
-        return jsonify({"success": True})
+        doc_ref = patients_ref.add({"name": name, "age": age, "condition": condition, "createdAt": SERVER_TIMESTAMP})
+        
+        # doc_ref is a tuple (write_result, doc_reference) in Firestore Python SDK
+        # get the new document ID
+        new_doc_id = doc_ref[1].id if isinstance(doc_ref, tuple) else doc_ref.id
+
+        return jsonify({
+            "success": True,
+            "patient": {
+                "id": new_doc_id,
+                "name": name,
+                "age": age,
+                "condition": condition,
+                "createdAt": datetime.utcnow().isoformat()
+            }
+        })
     except Exception as e:
         traceback.print_exc()
         return jsonify({"success": False, "error": str(e)}), 500
@@ -144,7 +159,7 @@ def add_patient():
 @token_required
 def get_patients():
     try:
-        patients_ref = db.collection("users").document(g.user["user_id"]).collection("patients")
+        patients_ref = db.collection("users").document(g.user["user_id"]).collection("patients").order_by("createdAt", direction=firestore.Query.DESCENDING)
         patients = [{"id": doc.id, **doc.to_dict()} for doc in patients_ref.stream()]
         return jsonify(patients)
     except Exception as e:
@@ -279,6 +294,12 @@ def start_assistant(data):
                     if delta and isinstance(delta, str):
                         # normalize whitespace/newlines
                         clean_delta = delta.replace("\r", "")
+
+                        # Remove leading spaces only if it's at the start of a line
+                        lines = clean_delta.split("\n")
+                        lines = [line.lstrip() if line.lstrip().startswith("#") else line for line in lines]
+                        clean_delta = "\n".join(lines)
+
                         partial_text += clean_delta
 
                         # emit to frontend
@@ -345,10 +366,9 @@ def search_messages():
 
     keyword = request.args.get("q", "").lower().strip()
     if not keyword:
-        return jsonify([])  # Return empty array if no keyword
+        return jsonify([])
 
     try:
-        # Search all chat_history subcollections across all patients
         chats_ref = db.collection_group("chat_history")
         docs = chats_ref.stream()
 
@@ -356,9 +376,16 @@ def search_messages():
 
         for doc in docs:
             data = doc.to_dict()
-            content = data.get("content", "").lower()
-            if keyword in content:
-                # Find patient_id from document reference
+            content_value = data.get("content", "")
+
+            # Ensure content is a string
+            if isinstance(content_value, dict):
+                # If you want to search inside dict -> flatten
+                content_str = " ".join(str(v) for v in content_value.values())
+            else:
+                content_str = str(content_value).lower()
+
+            if keyword in content_str:
                 patient_ref = doc.reference.parent.parent
                 if not patient_ref:
                     continue
@@ -378,7 +405,9 @@ def search_messages():
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
     
-    # In-memory storage per session (keyed by a temporary ID, e.g., generated on frontend)
+    
+    
+# In-memory storage per session (keyed by a temporary ID, e.g., generated on frontend)
 ephemeral_chats = defaultdict(list)
 
 @app.route("/anon-chat", methods=["POST", "OPTIONS"])

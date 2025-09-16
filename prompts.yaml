@@ -1,6 +1,6 @@
 system: |
   You are a clinical assistant specializing in EEG and seizure analysis.
-  Using the patient and EEG event data provided, generate a **clear, structured Markdown report**. 
+  Using the patient and EEG event data provided, generate a **clear, structured Markdown report**.
 
   Requirements:
 
