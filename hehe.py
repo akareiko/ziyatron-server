@@ -16,6 +16,7 @@ import yaml
 from script import run_eeg_inference
 import uuid
 from google.cloud.firestore_v1 import SERVER_TIMESTAMP
+import re
 
 
 load_dotenv()
@@ -292,17 +293,22 @@ def start_assistant(data):
                 if event.type == "response.output_text.delta":
                     delta = getattr(event, "delta", "")
                     if delta and isinstance(delta, str):
-                        # normalize whitespace/newlines
                         clean_delta = delta.replace("\r", "")
 
-                        # Remove leading spaces only if it's at the start of a line
-                        lines = clean_delta.split("\n")
-                        lines = [line.lstrip() if line.lstrip().startswith("#") else line for line in lines]
-                        clean_delta = "\n".join(lines)
+                        # remove zero-width / BOM / NBSP that break "start of line"
+                        clean_delta = clean_delta.replace("\u200b", "")   # ZERO WIDTH SPACE
+                        clean_delta = clean_delta.replace("\ufeff", "")   # BOM
+                        clean_delta = clean_delta.replace("\u00a0", " ")  # NO-BREAK SPACE -> normal
+
+                        # If the incoming chunk *starts* with a heading/list token, ensure it's on its own line.
+                        # (if partial_text doesn't already end with a newline, prefix one)
+                        if re.match(r'^\s*(#{1,6}\s+|- |\* |\d+\.\s+|> )', clean_delta) and not partial_text.endswith('\n'):
+                            clean_delta = '\n' + clean_delta.lstrip()
+
+                        # Also normalize internal cases where a space + '#' appears mid-chunk -> replace with newline + '#'
+                        clean_delta = re.sub(r'(?<!\n)\s+(?=(#{1,6}\s+|- |\* |\d+\.\s+|> ))', '\n', clean_delta)
 
                         partial_text += clean_delta
-
-                        # emit to frontend
                         emit("assistant_update", {"text_delta": clean_delta}, room=session_id)
 
         # Save final message to Firestore
