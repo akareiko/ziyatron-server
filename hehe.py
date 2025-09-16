@@ -276,16 +276,16 @@ def start_assistant(data):
         with open("prompts.yaml", "r") as f:
             prompts = yaml.safe_load(f)
 
-        messages = [
-            {"role": "system", "content": prompts.get("system", "")},
-            # {"role": "user", "content": prompts.get("developer", "")}
-        ]
-
+        messages = []
         if eeg_summary:
-            messages.append({"role": "system", "content": eeg_summary})
+            messages.append({"role": "system", "content": prompts.get("system_eeg_summary", "")})
+            messages.append({"role": "user", "content": eeg_summary})
+        else:
+            messages.append({"role": "system", "content": prompts.get("system_general", "")})
 
+        messages.append({"role": "user", "content": user_message})
         partial_text = ""
-
+        
         with client.responses.stream(model="gpt-4o-mini", input=messages) as stream:
             for event in stream:
                 # Only process text deltas

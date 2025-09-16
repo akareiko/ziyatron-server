@@ -58,7 +58,6 @@ def run_eeg_inference(bucket_name: str, blob_name: str):
     try:
         with download_from_firebase(bucket_name, blob_name) as file_path:
             output = run_inference_sync(SESSION, file_path)
-            print(f"[INFO] Inference output shape: {output.shape}")
             return output
     except Exception as e:
         print(f"[ERROR] run_eeg_inference failed: {e}")
