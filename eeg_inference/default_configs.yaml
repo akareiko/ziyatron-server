@@ -25,3 +25,6 @@ filter:
 normalize: true
 window: 10
 batch_size: 32
+event_annotation:
+  - normal
+  - seizure

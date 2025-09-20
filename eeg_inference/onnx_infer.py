@@ -92,11 +92,11 @@ def get_io_names(session: ort.InferenceSession) -> tuple:
     output_names = [out.name for out in session.get_outputs()]
     return input_names, output_names
 
-def run_inference_sync(session: ort.InferenceSession, file_path: str) -> np.ndarray:
+def run_inference_sync(session: ort.InferenceSession, file_path: str, config_file: str) -> np.ndarray:
     """
     Synchronous inference call.
     """
-    inputs, config = preprocess.preprocess_eeg_data(file_path)
+    inputs, config = preprocess.preprocess_eeg_data(file_path, config_file)
     input_names, output_names = get_io_names(session)
     eeg_results = []
     for input in inputs:
@@ -106,17 +106,13 @@ def run_inference_sync(session: ort.InferenceSession, file_path: str) -> np.ndar
         eeg_results.append(result)
     eeg_results = np.concatenate(eeg_results, axis=0) # gather from all batches
     eeg_results = utils.softmax(eeg_results) # apply softmax to raw logits
-    
     class_indices = np.argmax(eeg_results, axis=1)
     confidence_levels = np.max(eeg_results, axis=1)
 
     events = []
     left, right = 0, -1
 
-    event_annotation = {
-        0: "normal",
-        1: "seizure",
-    }
+    event_annotation = config['event_annotation']
 
     def save_event(index: int, start: int, end: int):
         events.append({
@@ -129,7 +125,7 @@ def run_inference_sync(session: ort.InferenceSession, file_path: str) -> np.ndar
     window = config['window']
 
     for i in range(len(class_indices)):
-        if class_indices[i] not in event_annotation:
+        if not (0 <= class_indices[i] < len(event_annotation)):
             continue
         if i == 0 or class_indices[i - 1] != class_indices[i]:
             if i != 0:
@@ -143,19 +139,22 @@ def run_inference_sync(session: ort.InferenceSession, file_path: str) -> np.ndar
     config['events'] = events
     return config
 
-async def run_inference_async(session: ort.InferenceSession, file_path: str) -> np.ndarray:
+async def run_inference_async(session: ort.InferenceSession, file_path: str, config_file: str) -> np.ndarray:
     """
     Async wrapper for inference (useful in FastAPI or async workflows).
     """
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, run_inference_sync, session, file_path)
+    return await loop.run_in_executor(None, run_inference_sync, session, file_path, config_file)
 
 if __name__ == "__main__":
-    onnx_model_path = "/Users/Yerassyl/Desktop/ziyatron/ziyatron-server/models/best_model.onnx"
-    inspect_onnx_model(onnx_model_path)
+    onnx_model_path = "./models/kaz_data.onnx"
+    sample_path = "./samples/kaz_sample1.edf"
+    config_path = "./eeg_inference/kaz_configs.yaml"
+    
+    # inspect_onnx_model(onnx_model_path)
     session = create_session(onnx_model_path)
 
-    output = run_inference_sync(session, "/Users/Yerassyl/Desktop/ziyatron/ziyatron-server/samples/chb01_01.edf")
+    output = run_inference_sync(session, sample_path, config_path)
     print(output)
     # async def main():
     #     output = await run_inference_async(session, "path/to/file/eeg.edf")

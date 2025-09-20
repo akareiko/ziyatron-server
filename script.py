@@ -13,7 +13,8 @@ from eeg_inference.onnx_infer import (
 # Config
 # -------------------------------
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "./firebase-key.json"
-ONNX_MODEL_PATH = "./models/best_model.onnx"
+ONNX_MODEL_PATH = "./models/kaz_data.onnx"
+CONFIG_PATH = "./eeg_inference/kaz_configs.yaml"
 
 # Load ONNX model session once (global)
 try:
@@ -57,7 +58,7 @@ def run_eeg_inference(bucket_name: str, blob_name: str):
 
     try:
         with download_from_firebase(bucket_name, blob_name) as file_path:
-            output = run_inference_sync(SESSION, file_path)
+            output = run_inference_sync(SESSION, file_path, CONFIG_PATH)
             return output
     except Exception as e:
         print(f"[ERROR] run_eeg_inference failed: {e}")
@@ -73,7 +74,7 @@ async def run_eeg_inference_async(bucket_name: str, blob_name: str):
 
     try:
         with download_from_firebase(bucket_name, blob_name) as file_path:
-            output = await run_inference_async(SESSION, file_path)
+            output = await run_inference_async(SESSION, file_path, CONFIG_PATH)
             print(f"[INFO] Async inference output shape: {output.shape}")
             return output
     except Exception as e:

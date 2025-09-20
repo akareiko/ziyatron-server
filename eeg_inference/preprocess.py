@@ -23,6 +23,7 @@ def preprocess_eeg_data(file_path: str, config_file: str = './eeg_inference/defa
         batch_size = config['batch_size']
 
     raw = mne.io.read_raw_edf(file_path, preload=True, verbose=False)
+
     channels_to_drop = []
     channels_to_rename = {}
     channels_to_be_found = set(channel_conf)
@@ -77,6 +78,6 @@ def preprocess_eeg_data(file_path: str, config_file: str = './eeg_inference/defa
 
     batches = np.array_split(batches, batches.shape[0] // batch_size, axis=0)
 
-    
     print(f"[INFO] Number of batches: {len(batches)}")
+    print(batches[0].shape)
     return batches, config
