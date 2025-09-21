@@ -380,7 +380,7 @@ async def anon_chat(chat_data: AnonChatMessage):
         raise HTTPException(status_code=500, detail=str(e))
 
 # WebSocket endpoint
-@app.websocket("/ws/{session_id}")
+@app.websocket("/{session_id}")
 async def websocket_endpoint(websocket: WebSocket, session_id: str):
     await manager.connect(websocket, session_id)
     
