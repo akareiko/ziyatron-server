@@ -312,40 +312,40 @@ async def search_messages(q: str = "", current_user: dict = Depends(get_current_
         return []
 
     try:
-        chats_ref = db.collection_group("chat_history")
-        docs = chats_ref.stream()
-
         results = []
 
-        for doc in docs:
-            data = doc.to_dict()
-            content_value = data.get("content", "")
+        # 1. Get the current user's patients
+        patients_ref = db.collection("users").document(current_user["user_id"]).collection("patients")
+        for patient_doc in patients_ref.stream():
+            patient_id = patient_doc.id
 
-            # Ensure content is a string
-            if isinstance(content_value, dict):
-                content_str = " ".join(str(v) for v in content_value.values())
-            else:
-                content_str = str(content_value).lower()
+            # 2. Get chat_history for this patient
+            chat_ref = patients_ref.document(patient_id).collection("chat_history")
+            for chat_doc in chat_ref.stream():
+                data = chat_doc.to_dict()
+                content_value = data.get("content", "")
 
-            if keyword in content_str:
-                patient_ref = doc.reference.parent.parent
-                if not patient_ref:
-                    continue
-                patient_id = patient_ref.id
+                # Ensure content is a string
+                if isinstance(content_value, dict):
+                    content_str = " ".join(str(v) for v in content_value.values()).lower()
+                else:
+                    content_str = str(content_value).lower()
 
-                results.append({
-                    "patient_id": patient_id,
-                    "message_id": doc.id,
-                    "role": data.get("role"),
-                    "content": data.get("content"),
-                    "timestamp": data.get("timestamp").isoformat() if data.get("timestamp") else None
-                })
+                if keyword in content_str:
+                    results.append({
+                        "patient_id": patient_id,
+                        "message_id": chat_doc.id,
+                        "role": data.get("role"),
+                        "content": data.get("content"),
+                        "timestamp": data.get("timestamp").isoformat() if data.get("timestamp") else None
+                    })
 
         return results
 
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
 
 # Anonymous chat
 ephemeral_chats = defaultdict(list)
