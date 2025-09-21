@@ -437,8 +437,6 @@ async def handle_assistant_stream(data: dict, session_id: str):
         messages.append({"role": "user", "content": user_message})
         partial_text = ""
         
-        partial_text = ""
-        
         with client.responses.stream(model="gpt-4o-mini", input=messages) as stream:
             for event in stream:
                 # Only process text deltas
