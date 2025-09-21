@@ -1,9 +1,14 @@
-from fastapi import FastAPI, HTTPException, Depends, WebSocket, WebSocketDisconnect, Request
+from fastapi import (
+    FastAPI,
+    HTTPException,
+    Depends,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from typing import Optional, List, Dict, Any
+from typing import Optional, Dict, Any
 import os
 import traceback
 from google.cloud import firestore, storage
@@ -13,14 +18,13 @@ import numpy as np
 import bcrypt
 import jwt
 from collections import defaultdict
-import json
 from dotenv import load_dotenv
 import yaml
-from script import run_eeg_inference
+from script import run_eeg_inference_async
 import uuid
 from google.cloud.firestore_v1 import SERVER_TIMESTAMP
 import re
-import asyncio
+import logging
 
 load_dotenv()
 
@@ -244,7 +248,7 @@ async def post_chat(patient_id: str, chat_data: ChatMessage, current_user: dict 
         eeg_summary = None
         if file_url:
             try:
-                output = run_eeg_inference(bucket, blob)
+                output = await run_eeg_inference_async(bucket, blob)
                 eeg_summary = f"EEG model output: {np.array(output).tolist()}"
                 chat_ref.add({
                     "role": "system",

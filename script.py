@@ -75,7 +75,6 @@ async def run_eeg_inference_async(bucket_name: str, blob_name: str):
     try:
         with download_from_firebase(bucket_name, blob_name) as file_path:
             output = await run_inference_async(SESSION, file_path, CONFIG_PATH)
-            print(f"[INFO] Async inference output shape: {output.shape}")
             return output
     except Exception as e:
         print(f"[ERROR] run_eeg_inference_async failed: {e}")
