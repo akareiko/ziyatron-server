@@ -7,3 +7,4 @@ venv/
 samples/
 __pycache__/
 .vscode
+logs/

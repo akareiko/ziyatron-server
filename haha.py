@@ -26,13 +26,14 @@ load_dotenv()
 
 SECRET_KEY = "super-secret-key"
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "./firebase-key.json"
+FRONTEND_URL = os.getenv("FRONTEND_URL")
 
 app = FastAPI()
 
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=[FRONTEND_URL],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
