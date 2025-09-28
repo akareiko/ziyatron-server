@@ -13,8 +13,8 @@ from eeg_inference.onnx_infer import (
 # Config
 # -------------------------------
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "./firebase-key.json"
-ONNX_MODEL_PATH = "./models/kaz_data.onnx"
-CONFIG_PATH = "./eeg_inference/kaz_configs.yaml"
+ONNX_MODEL_PATH = "./models/kaz_data_v2.onnx"
+CONFIG_PATH = "./eeg_inference/kaz_configs_v2.yaml"
 
 # Load ONNX model session once (global)
 try:

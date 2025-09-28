@@ -148,7 +148,7 @@ async def run_inference_async(session: ort.InferenceSession, file_path: str, con
 
 if __name__ == "__main__":
     onnx_model_path = "./models/kaz_data.onnx"
-    sample_path = "./samples/kaz_sample1.edf"
+    sample_path = "./samples/kaz_sample2.edf"
     config_path = "./eeg_inference/kaz_configs.yaml"
     
     # inspect_onnx_model(onnx_model_path)
